@@ -1,13 +1,19 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"math"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -161,6 +167,59 @@ func CalculateRSI(prices []float64, period int) float64 {
 	return rsi
 }
 
+// NewOrder cria uma nova ordem na Binance
+// symbol: par de moedas (ex: BTCUSDT)
+// quantity: quantidade a ser comprada/vendida
+// side: lado da ordem (BUY ou SELL)
+// Retorna erro em caso de falha na criação da ordem
+func NewOrder(symbol string, quantity float64, side string) error {
+	// Prepara os parâmetros da ordem
+	params := url.Values{}
+	params.Add("symbol", symbol)
+	params.Add("quantity", fmt.Sprintf("%f", quantity))
+	params.Add("side", side)
+	params.Add("type", "MARKET")
+	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
+
+	// Gera a assinatura HMAC SHA256
+	mac := hmac.New(sha256.New, []byte(os.Getenv("BINANCE_API_SECRET")))
+	mac.Write([]byte(params.Encode()))
+	signature := hex.EncodeToString(mac.Sum(nil))
+	params.Add("signature", signature)
+
+	// Cria a requisição
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v3/order", API_URL), strings.NewReader(params.Encode()))
+	if err != nil {
+		return err
+	}
+
+	// Adiciona os headers necessários
+	req.Header.Add("X-MBX-APIKEY", os.Getenv("BINANCE_API_KEY"))
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	// Envia a requisição
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Lê a resposta
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	// Se o status não for 200, retorna erro
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("erro na criação da ordem: %s", string(body))
+	}
+
+	fmt.Printf("Ordem criada com sucesso: %s\n", string(body))
+	return nil
+}
+
 // StartTrading é a função principal de trading que:
 // 1. Busca os dados mais recentes dos candles
 // 2. Extrai o último preço
@@ -192,10 +251,20 @@ func StartTrading() {
 
 	if rsi < 30 && !IsOpened {
 		fmt.Println("sobrevendido, momento de comprar")
-		IsOpened = true
+		if err := NewOrder(SYMBOL, 0.001, "BUY"); err != nil {
+			log.Println(err)
+			IsOpened = false
+		} else {
+			IsOpened = true
+		}
 	} else if rsi > 70 && IsOpened {
 		fmt.Println("sobrecomprado, momento de vender")
-		IsOpened = false
+		if err := NewOrder(SYMBOL, 0.001, "SELL"); err != nil {
+			log.Println(err)
+			IsOpened = true
+		} else {
+			IsOpened = false
+		}
 	} else {
 		fmt.Println("Aguardando oportunidades...")
 	}
