@@ -179,7 +179,7 @@ func calculateAverage(prices []float64, period int, startIdx int) (float64, floa
 // - float64: valor do RSI entre 0 e 100
 func CalculateRSI(prices []float64, period int) float64 {
 	if len(prices) < period+1 {
-		log.Fatal("Not enough prices to calculate RSI")
+		panic("Not enough prices to calculate RSI")
 	}
 
 	var avgGains, avgLoss float64
