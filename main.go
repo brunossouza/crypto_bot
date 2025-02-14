@@ -15,20 +15,55 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
-const (
-	// URL base da API da Binance
-	API_URL = "https://testnet.binance.vision" //"https://api.binance.com"
-	// Par de moedas para negociação
-	SYMBOL = "BTCUSDT"
-	// Período para calcular a média - usado no cálculo do RSI
-	PERIOD = 14
-)
+// Config armazena todas as configurações do bot
+type Config struct {
+	ApiURL    string
+	Symbol    string
+	Period    int
+	ApiKey    string
+	ApiSecret string
+}
 
+// LoadConfig carrega e valida todas as configurações do arquivo .env
+func LoadConfig() (*Config, error) {
+	if err := godotenv.Load(); err != nil {
+		return nil, fmt.Errorf("erro ao carregar arquivo .env: %v", err)
+	}
+
+	config := &Config{
+		ApiURL:    os.Getenv("API_URL"),
+		Symbol:    os.Getenv("SYMBOL"),
+		ApiKey:    os.Getenv("BINANCE_API_KEY"),
+		ApiSecret: os.Getenv("BINANCE_API_SECRET"),
+	}
+
+	// Converte PERIOD para inteiro
+	periodStr := os.Getenv("PERIOD")
+	period, err := strconv.Atoi(periodStr)
+	if err != nil {
+		return nil, fmt.Errorf("PERIOD deve ser um número inteiro válido: %v", err)
+	}
+	config.Period = period
+
+	// Validação das configurações
+	if config.ApiKey == "" || config.ApiSecret == "" {
+		return nil, fmt.Errorf("as variáveis de ambiente BINANCE_API_KEY e BINANCE_API_SECRET são obrigatórias")
+	}
+	if config.ApiURL == "" || config.Symbol == "" || config.Period <= 0 {
+		return nil, fmt.Errorf("as variáveis de ambiente API_URL, SYMBOL e PERIOD são obrigatórias")
+	}
+
+	return config, nil
+}
+
+// Atualiza as variáveis globais para usar config
 var (
-	// Flag para verificar se a posição está aberta
 	IsOpened bool = false
+	config   *Config
 )
 
 type Candlestick struct {
@@ -46,14 +81,10 @@ type Candlestick struct {
 	Ignore                   float64 // Campo não utilizado, ignorar
 }
 
-// GetCandlesticks busca os dados dos candles (velas) da API da Binance
-// symbol: par de moedas (ex: BTCUSDT)
-// interval: intervalo de tempo entre os candles (ex: 15m, 1h, 4h, 1d)
-// limit: quantidade de candles a serem retornados
-// Retorna um slice de Candlestick contendo os dados históricos do par de moedas
+// Update GetCandlesticks to use config variable
 func GetCandlesticks(symbol string, interval string, limit int) []Candlestick {
 	// Cria uma nova requisição
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v3/klines?symbol=%s&interval=%s&limit=%d", API_URL, symbol, interval, limit), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v3/klines?symbol=%s&interval=%s&limit=%d", config.ApiURL, symbol, interval, limit), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -167,11 +198,7 @@ func CalculateRSI(prices []float64, period int) float64 {
 	return rsi
 }
 
-// NewOrder cria uma nova ordem na Binance
-// symbol: par de moedas (ex: BTCUSDT)
-// quantity: quantidade a ser comprada/vendida
-// side: lado da ordem (BUY ou SELL)
-// Retorna erro em caso de falha na criação da ordem
+// Update NewOrder to use config variable
 func NewOrder(symbol string, quantity float64, side string) error {
 	// Prepara os parâmetros da ordem
 	params := url.Values{}
@@ -182,19 +209,19 @@ func NewOrder(symbol string, quantity float64, side string) error {
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
 	// Gera a assinatura HMAC SHA256
-	mac := hmac.New(sha256.New, []byte(os.Getenv("BINANCE_API_SECRET")))
+	mac := hmac.New(sha256.New, []byte(config.ApiSecret))
 	mac.Write([]byte(params.Encode()))
 	signature := hex.EncodeToString(mac.Sum(nil))
 	params.Add("signature", signature)
 
 	// Cria a requisição
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v3/order", API_URL), strings.NewReader(params.Encode()))
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v3/order", config.ApiURL), strings.NewReader(params.Encode()))
 	if err != nil {
 		return err
 	}
 
 	// Adiciona os headers necessários
-	req.Header.Add("X-MBX-APIKEY", os.Getenv("BINANCE_API_KEY"))
+	req.Header.Add("X-MBX-APIKEY", config.ApiKey)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	// Envia a requisição
@@ -220,15 +247,10 @@ func NewOrder(symbol string, quantity float64, side string) error {
 	return nil
 }
 
-// StartTrading é a função principal de trading que:
-// 1. Busca os dados mais recentes dos candles
-// 2. Extrai o último preço
-// 3. Calcula o RSI com base nos preços históricos
-// 4. Limpa a tela e exibe as informações atualizadas
-// Esta função é executada periodicamente pelo main()
+// Update StartTrading to use config variable
 func StartTrading() {
 	// Obtém os dados dos candles
-	candlesticks := GetCandlesticks(SYMBOL, "15m", 100)
+	candlesticks := GetCandlesticks(config.Symbol, "15m", 100)
 
 	// Obtém o último preço
 	lastPrice := candlesticks[len(candlesticks)-1].Close
@@ -239,7 +261,7 @@ func StartTrading() {
 	}
 
 	// Calcula o RSI
-	rsi := CalculateRSI(prices, PERIOD)
+	rsi := CalculateRSI(prices, config.Period)
 
 	// Limpa a tela
 	fmt.Print("\033[H\033[2J")
@@ -251,7 +273,7 @@ func StartTrading() {
 
 	if rsi < 30 && !IsOpened {
 		fmt.Println("sobrevendido, momento de comprar")
-		if err := NewOrder(SYMBOL, 0.001, "BUY"); err != nil {
+		if err := NewOrder(config.Symbol, 0.001, "BUY"); err != nil {
 			log.Println(err)
 			IsOpened = false
 		} else {
@@ -259,7 +281,7 @@ func StartTrading() {
 		}
 	} else if rsi > 70 && IsOpened {
 		fmt.Println("sobrecomprado, momento de vender")
-		if err := NewOrder(SYMBOL, 0.001, "SELL"); err != nil {
+		if err := NewOrder(config.Symbol, 0.001, "SELL"); err != nil {
 			log.Println(err)
 			IsOpened = true
 		} else {
@@ -274,11 +296,19 @@ func StartTrading() {
 // Configura um temporizador para executar StartTrading a cada 3 segundos
 // Continua executando até o programa ser interrompido (CTRL+C)
 func main() {
-	// Cria um temporizador que dispara a cada 3 segundos
+	var err error
+	config, err = LoadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Cria um temporizador que dispara a cada 10 segundos
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	fmt.Println("Bot iniciado! Pressione CTRL+C para parar")
+
+	StartTrading()
 
 	// Executa indefinidamente até o programa ser interrompido
 	for range ticker.C {
