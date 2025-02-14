@@ -48,3 +48,18 @@ func TestCalculateRSIPricesListSmallerThanPeriod(t *testing.T) {
 	prices := []float64{1.0, 1.2, 1.4, 1.3, 1.5, 1.6, 1.55, 1.7, 1.8, 1.75}
 	_ = CalculateRSI(prices, 14)
 }
+
+// BenchmarkCalculateRSI mede o desempenho da função CalculateRSI.
+func BenchmarkCalculateRSI(b *testing.B) {
+	// Cria uma lista de preços com 1000 elementos
+	prices := make([]float64, 1000)
+	for i := range prices {
+		prices[i] = 1.0 + float64(i)*0.01
+	}
+	period := 14
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = CalculateRSI(prices, period)
+	}
+}
