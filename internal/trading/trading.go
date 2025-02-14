@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/brunossouza/crypto_bot/internal/config"
+	"github.com/brunossouza/crypto_bot/internal/database"
 )
 
 var (
@@ -29,6 +30,15 @@ var (
 // O método armazena a configuração em uma variável global para uso em todo o pacote
 func Initialize(c *config.Config) {
 	cfg = c
+	if err := database.Initialize(); err != nil {
+		log.Fatal("Erro ao inicializar banco de dados:", err)
+	}
+	// Load last status from the database
+	status, err := database.GetPosition(cfg.Symbol)
+	if err != nil {
+		log.Println("Erro ao carregar status da posição:", err)
+	}
+	IsOpened = status
 }
 
 type Candlestick struct {
@@ -200,16 +210,11 @@ func CalculateRSI(prices []float64, period int) float64 {
 // - symbol: par de moedas para negociação (ex: BTCUSDT)
 // - quantity: quantidade do ativo a ser negociada
 // - side: direção da ordem ("BUY" para compra, "SELL" para venda)
-//
-// O método:
-// 1. Prepara os parâmetros necessários para a ordem
-// 2. Gera uma assinatura HMAC SHA256 para autenticação
-// 3. Envia uma requisição POST para a API da Binance
-// 4. Processa a resposta e verifica se houve sucesso
+// - price: preço atual do ativo no momento da ordem
 //
 // Retorna:
 // - error: nil em caso de sucesso, ou erro em caso de falha
-func NewOrder(symbol string, quantity float64, side string) error {
+func NewOrder(symbol string, quantity float64, side string, price float64) error {
 	// Prepara os parâmetros da ordem
 	params := url.Values{}
 	params.Add("symbol", symbol)
@@ -251,6 +256,17 @@ func NewOrder(symbol string, quantity float64, side string) error {
 	// Se o status não for 200, retorna erro
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("erro na criação da ordem: %s", string(body))
+	}
+
+	// Se a ordem foi criada com sucesso, salva no banco
+	if err := database.SaveOrder(symbol, side, quantity, price); err != nil {
+		return fmt.Errorf("erro ao salvar ordem: %v", err)
+	}
+
+	// Atualiza a posição no banco
+	isOpened := side == "BUY"
+	if err := database.UpdatePosition(symbol, isOpened); err != nil {
+		return fmt.Errorf("erro ao atualizar posição: %v", err)
 	}
 
 	fmt.Printf("Ordem criada com sucesso: %s\n", string(body))
@@ -296,17 +312,24 @@ func StartTrading() {
 	fmt.Println("Aberto:", IsOpened)
 	fmt.Println("")
 
-	if rsi < 30 && !IsOpened {
+	// Obtém o estado da posição do banco
+	isOpened, err := database.GetPosition(cfg.Symbol)
+	if err != nil {
+		log.Printf("Erro ao obter posição: %v", err)
+		return
+	}
+
+	if rsi < 30 && !isOpened {
 		fmt.Println("sobrevendido, momento de comprar")
-		if err := NewOrder(cfg.Symbol, 0.001, "BUY"); err != nil {
+		if err := NewOrder(cfg.Symbol, 0.001, "BUY", lastPrice); err != nil {
 			log.Println(err)
 			IsOpened = false
 		} else {
 			IsOpened = true
 		}
-	} else if rsi > 70 && IsOpened {
+	} else if rsi > 70 && isOpened {
 		fmt.Println("sobrecomprado, momento de vender")
-		if err := NewOrder(cfg.Symbol, 0.001, "SELL"); err != nil {
+		if err := NewOrder(cfg.Symbol, 0.001, "SELL", lastPrice); err != nil {
 			log.Println(err)
 			IsOpened = true
 		} else {
