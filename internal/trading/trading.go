@@ -1,4 +1,4 @@
-package main
+package trading
 
 import (
 	"crypto/hmac"
@@ -11,60 +11,25 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
+	"github.com/brunossouza/crypto_bot/internal/config"
 )
 
-// Config armazena todas as configurações do bot
-type Config struct {
-	ApiURL    string
-	Symbol    string
-	Period    int
-	ApiKey    string
-	ApiSecret string
-}
-
-// LoadConfig carrega e valida todas as configurações do arquivo .env
-func LoadConfig() (*Config, error) {
-	if err := godotenv.Load(); err != nil {
-		return nil, fmt.Errorf("erro ao carregar arquivo .env: %v", err)
-	}
-
-	config := &Config{
-		ApiURL:    os.Getenv("API_URL"),
-		Symbol:    os.Getenv("SYMBOL"),
-		ApiKey:    os.Getenv("BINANCE_API_KEY"),
-		ApiSecret: os.Getenv("BINANCE_API_SECRET"),
-	}
-
-	// Converte PERIOD para inteiro
-	periodStr := os.Getenv("PERIOD")
-	period, err := strconv.Atoi(periodStr)
-	if err != nil {
-		return nil, fmt.Errorf("PERIOD deve ser um número inteiro válido: %v", err)
-	}
-	config.Period = period
-
-	// Validação das configurações
-	if config.ApiKey == "" || config.ApiSecret == "" {
-		return nil, fmt.Errorf("as variáveis de ambiente BINANCE_API_KEY e BINANCE_API_SECRET são obrigatórias")
-	}
-	if config.ApiURL == "" || config.Symbol == "" || config.Period <= 0 {
-		return nil, fmt.Errorf("as variáveis de ambiente API_URL, SYMBOL e PERIOD são obrigatórias")
-	}
-
-	return config, nil
-}
-
-// Atualiza as variáveis globais para usar config
 var (
+	cfg      *config.Config
 	IsOpened bool = false
-	config   *Config
 )
+
+// Initialize define as configurações para o pacote de trading
+// Parâmetros:
+// - c: ponteiro para a estrutura de configuração contendo as credenciais da API e parâmetros do bot
+// O método armazena a configuração em uma variável global para uso em todo o pacote
+func Initialize(c *config.Config) {
+	cfg = c
+}
 
 type Candlestick struct {
 	OpenTime                 int64   // Horário de abertura do candle em milissegundos
@@ -81,10 +46,22 @@ type Candlestick struct {
 	Ignore                   float64 // Campo não utilizado, ignorar
 }
 
-// Update GetCandlesticks to use config variable
+// GetCandlesticks obtém os dados históricos de preços do par de moedas especificado
+// Parâmetros:
+// - symbol: par de moedas para obter dados (ex: BTCUSDT)
+// - interval: intervalo de tempo entre cada candle (ex: "15m", "1h", "4h")
+// - limit: quantidade máxima de candles a serem retornados
+//
+// O método:
+// 1. Faz uma requisição GET para a API da Binance
+// 2. Processa a resposta JSON
+// 3. Converte os dados para a estrutura Candlestick
+//
+// Retorna:
+// - []Candlestick: slice contendo os dados históricos formatados
 func GetCandlesticks(symbol string, interval string, limit int) []Candlestick {
 	// Cria uma nova requisição
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v3/klines?symbol=%s&interval=%s&limit=%d", config.ApiURL, symbol, interval, limit), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v3/klines?symbol=%s&interval=%s&limit=%d", cfg.ApiURL, symbol, interval, limit), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -132,8 +109,15 @@ func GetCandlesticks(symbol string, interval string, limit int) []Candlestick {
 }
 
 // parseFloat converte uma string para float64
-// Função auxiliar utilizada para converter os valores string da API para números
-// Em caso de erro na conversão, finaliza o programa
+// Parâmetros:
+// - str: string contendo um número decimal
+//
+// O método:
+// 1. Tenta converter a string para float64
+// 2. Em caso de erro, finaliza o programa
+//
+// Retorna:
+// - float64: valor numérico convertido da string
 func parseFloat(str string) float64 {
 	val, err := strconv.ParseFloat(str, 64)
 	if err != nil {
@@ -143,33 +127,46 @@ func parseFloat(str string) float64 {
 }
 
 // calculateAverage calcula a média de ganhos e perdas para um determinado período
-// prices: slice com os preços históricos
-// period: período para cálculo da média
-// startIdx: índice inicial para começar o cálculo
-// Retorna dois float64: média de ganhos e média de perdas do período
+// Parâmetros:
+// - prices: slice com os preços históricos
+// - period: período para cálculo da média
+// - startIdx: índice inicial para começar o cálculo
+//
+// O método:
+// 1. Itera sobre os preços no período especificado
+// 2. Calcula a diferença entre preços consecutivos
+// 3. Acumula ganhos e perdas separadamente
+//
+// Retorna:
+// - float64: média dos ganhos no período
+// - float64: média das perdas no período
 func calculateAverage(prices []float64, period int, startIdx int) (float64, float64) {
 	var gain, loss float64
-
 	for i := 0; i < period && i+startIdx < len(prices); i++ {
 		diff := prices[i+startIdx] - prices[i+startIdx-1]
-
 		if diff > 0 {
 			gain += diff
 		} else {
 			loss += math.Abs(diff)
 		}
 	}
-
 	return gain / float64(period), loss / float64(period)
 }
 
-// CalculateRSI calcula o Índice de Força Relativa (RSI) usando Média Móvel Exponencial (EMA)
-// prices: slice com os preços históricos
-// period: período para cálculo do RSI (geralmente 14)
-// Utiliza EMA para dar mais peso aos preços recentes
-// Retorna o valor do RSI entre 0 e 100
-// - Valores acima de 70 indicam sobrecompra (overbought)
-// - Valores abaixo de 30 indicam sobrevenda (oversold)
+// CalculateRSI calcula o Índice de Força Relativa (RSI)
+// Parâmetros:
+// - prices: slice com os preços históricos
+// - period: período para cálculo do RSI (geralmente 14)
+//
+// O método:
+//  1. Verifica se há dados suficientes para o cálculo
+//  2. Calcula as médias iniciais de ganhos e perdas
+//  3. Aplica o cálculo da Média Móvel Exponencial (EMA)
+//  4. Calcula o RSI usando a fórmula: 100 - (100 / (1 + RS))
+//     onde RS = EMA dos ganhos / EMA das perdas
+//
+// Retorna:
+// - float64: valor do RSI entre 0 e 100
 func CalculateRSI(prices []float64, period int) float64 {
 	if len(prices) < period+1 {
 		log.Fatal("Not enough prices to calculate RSI")
@@ -198,7 +195,20 @@ func CalculateRSI(prices []float64, period int) float64 {
 	return rsi
 }
 
-// Update NewOrder to use config variable
+// NewOrder cria uma nova ordem de compra ou venda no mercado
+// Parâmetros:
+// - symbol: par de moedas para negociação (ex: BTCUSDT)
+// - quantity: quantidade do ativo a ser negociada
+// - side: direção da ordem ("BUY" para compra, "SELL" para venda)
+//
+// O método:
+// 1. Prepara os parâmetros necessários para a ordem
+// 2. Gera uma assinatura HMAC SHA256 para autenticação
+// 3. Envia uma requisição POST para a API da Binance
+// 4. Processa a resposta e verifica se houve sucesso
+//
+// Retorna:
+// - error: nil em caso de sucesso, ou erro em caso de falha
 func NewOrder(symbol string, quantity float64, side string) error {
 	// Prepara os parâmetros da ordem
 	params := url.Values{}
@@ -209,19 +219,19 @@ func NewOrder(symbol string, quantity float64, side string) error {
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
 	// Gera a assinatura HMAC SHA256
-	mac := hmac.New(sha256.New, []byte(config.ApiSecret))
+	mac := hmac.New(sha256.New, []byte(cfg.ApiSecret))
 	mac.Write([]byte(params.Encode()))
 	signature := hex.EncodeToString(mac.Sum(nil))
 	params.Add("signature", signature)
 
 	// Cria a requisição
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v3/order", config.ApiURL), strings.NewReader(params.Encode()))
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v3/order", cfg.ApiURL), strings.NewReader(params.Encode()))
 	if err != nil {
 		return err
 	}
 
 	// Adiciona os headers necessários
-	req.Header.Add("X-MBX-APIKEY", config.ApiKey)
+	req.Header.Add("X-MBX-APIKEY", cfg.ApiKey)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	// Envia a requisição
@@ -247,33 +257,48 @@ func NewOrder(symbol string, quantity float64, side string) error {
 	return nil
 }
 
-// Update StartTrading to use config variable
+// StartTrading executa a lógica principal de trading do bot
+// O método:
+// 1. Obtém os dados mais recentes dos candles
+// 2. Extrai o último preço e histórico de preços
+// 3. Calcula o RSI atual
+// 4. Atualiza a interface com informações do mercado
+// 5. Executa a lógica de trading baseada no RSI:
+//   - Compra quando RSI < 30 (sobrevenda)
+//   - Vende quando RSI > 70 (sobrecompra)
+//
+// Comportamento:
+// - Mantém controle do estado da posição através da variável IsOpened
+// - Executa ordens de mercado com quantidade fixa de 0.001
+// - Exibe mensagens de status no console
 func StartTrading() {
 	// Obtém os dados dos candles
-	candlesticks := GetCandlesticks(config.Symbol, "15m", 100)
+	candlesticks := GetCandlesticks(cfg.Symbol, "15m", 100)
 
 	// Obtém o último preço
 	lastPrice := candlesticks[len(candlesticks)-1].Close
 
 	var prices []float64
-	for _, candlestick := range candlesticks {
-		prices = append(prices, candlestick.Close)
+	for _, c := range candlesticks {
+		prices = append(prices, c.Close)
 	}
 
 	// Calcula o RSI
-	rsi := CalculateRSI(prices, config.Period)
+	rsi := CalculateRSI(prices, cfg.Period)
 
 	// Limpa a tela
 	fmt.Print("\033[H\033[2J")
-
-	// Imprime o último preço
+	fmt.Println("API URL:", cfg.ApiURL)
+	fmt.Println("Ativo:", cfg.Symbol)
 	fmt.Printf("Último preço: %.2f\n", lastPrice)
-	// Imprime o RSI
 	fmt.Printf("RSI: %.2f\n", rsi)
+	fmt.Println("Período:", cfg.Period)
+	fmt.Println("Aberto:", IsOpened)
+	fmt.Println("")
 
 	if rsi < 30 && !IsOpened {
 		fmt.Println("sobrevendido, momento de comprar")
-		if err := NewOrder(config.Symbol, 0.001, "BUY"); err != nil {
+		if err := NewOrder(cfg.Symbol, 0.001, "BUY"); err != nil {
 			log.Println(err)
 			IsOpened = false
 		} else {
@@ -281,7 +306,7 @@ func StartTrading() {
 		}
 	} else if rsi > 70 && IsOpened {
 		fmt.Println("sobrecomprado, momento de vender")
-		if err := NewOrder(config.Symbol, 0.001, "SELL"); err != nil {
+		if err := NewOrder(cfg.Symbol, 0.001, "SELL"); err != nil {
 			log.Println(err)
 			IsOpened = true
 		} else {
@@ -289,29 +314,5 @@ func StartTrading() {
 		}
 	} else {
 		fmt.Println("Aguardando oportunidades...")
-	}
-}
-
-// main é o ponto de entrada do programa
-// Configura um temporizador para executar StartTrading a cada 3 segundos
-// Continua executando até o programa ser interrompido (CTRL+C)
-func main() {
-	var err error
-	config, err = LoadConfig()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Cria um temporizador que dispara a cada 10 segundos
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	fmt.Println("Bot iniciado! Pressione CTRL+C para parar")
-
-	StartTrading()
-
-	// Executa indefinidamente até o programa ser interrompido
-	for range ticker.C {
-		StartTrading()
 	}
 }
