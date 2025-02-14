@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -34,9 +35,12 @@ type Config struct {
 // - Um ponteiro para Config com as configurações carregadas
 // - Um erro se houver falha no carregamento ou validação
 func LoadConfig() (*Config, error) {
+	// Tenta carregar o arquivo .env, mas não interrompe a execução se não existir
 	if err := godotenv.Load(); err != nil {
-		return nil, fmt.Errorf("erro ao carregar arquivo .env: %v", err)
+		fmt.Println("Warning: .env file not found, using environment variables")
 	}
+
+	fmt.Println("Carregando configurações...")
 
 	conf := &Config{
 		ApiURL:    os.Getenv("API_URL"),
@@ -45,19 +49,32 @@ func LoadConfig() (*Config, error) {
 		ApiSecret: os.Getenv("BINANCE_API_SECRET"),
 	}
 
+	var missingVars []string
+	if conf.ApiURL == "" {
+		missingVars = append(missingVars, "API_URL")
+	}
+	if conf.Symbol == "" {
+		missingVars = append(missingVars, "SYMBOL")
+	}
+	if conf.ApiKey == "" {
+		missingVars = append(missingVars, "BINANCE_API_KEY")
+	}
+	if conf.ApiSecret == "" {
+		missingVars = append(missingVars, "BINANCE_API_SECRET")
+	}
+
 	periodStr := os.Getenv("PERIOD")
 	period, err := strconv.Atoi(periodStr)
 	if err != nil {
-		return nil, fmt.Errorf("PERIOD deve ser um número inteiro válido: %v", err)
+		missingVars = append(missingVars, "PERIOD")
 	}
 	conf.Period = period
 
-	if conf.ApiKey == "" || conf.ApiSecret == "" {
-		return nil, fmt.Errorf("as variáveis BINANCE_API_KEY e BINANCE_API_SECRET são obrigatórias")
+	if len(missingVars) > 0 {
+		return nil, fmt.Errorf("as variáveis obrigatórias estão faltando: %s", strings.Join(missingVars, ", "))
 	}
-	if conf.ApiURL == "" || conf.Symbol == "" || conf.Period <= 0 {
-		return nil, fmt.Errorf("as variáveis API_URL, SYMBOL e PERIOD são obrigatórias")
-	}
+
+	fmt.Println("Configurações carregadas com sucesso")
 
 	return conf, nil
 }

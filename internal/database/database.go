@@ -2,9 +2,11 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
+	"os"
 	"time"
 
-	_ "modernc.org/sqlite" // changed from github.com/mattn/go-sqlite3
+	_ "github.com/lib/pq"
 )
 
 type Order struct {
@@ -26,8 +28,16 @@ type Position struct {
 var db *sql.DB
 
 func Initialize() error {
+	// Cria a connection string a partir das variáveis de ambiente
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("DB_NAME"),
+	)
 	var err error
-	db, err = sql.Open("sqlite", "trading.db")
+	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		return err
 	}
@@ -35,21 +45,21 @@ func Initialize() error {
 	// Criar tabelas se não existirem
 	createTables := `
 	CREATE TABLE IF NOT EXISTS orders (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id SERIAL PRIMARY KEY,
 		symbol TEXT NOT NULL,
 		side TEXT NOT NULL,
 		quantity REAL NOT NULL,
 		price REAL NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS positions (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id SERIAL PRIMARY KEY,
 		symbol TEXT UNIQUE NOT NULL,
 		is_opened BOOLEAN NOT NULL,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);`
-
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+	`
 	_, err = db.Exec(createTables)
 	return err
 }
@@ -57,7 +67,7 @@ func Initialize() error {
 func SaveOrder(symbol string, side string, quantity, price float64) error {
 	stmt, err := db.Prepare(`
 		INSERT INTO orders (symbol, side, quantity, price)
-		VALUES (?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4)
 	`)
 	if err != nil {
 		return err
@@ -71,9 +81,9 @@ func SaveOrder(symbol string, side string, quantity, price float64) error {
 func UpdatePosition(symbol string, isOpened bool) error {
 	stmt, err := db.Prepare(`
 		INSERT INTO positions (symbol, is_opened, updated_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(symbol)
-		DO UPDATE SET is_opened = ?, updated_at = CURRENT_TIMESTAMP
+		VALUES ($1, $2, CURRENT_TIMESTAMP)
+		ON CONFLICT (symbol)
+		DO UPDATE SET is_opened = $3, updated_at = CURRENT_TIMESTAMP
 	`)
 	if err != nil {
 		return err
@@ -88,7 +98,7 @@ func GetPosition(symbol string) (bool, error) {
 	var isOpened bool
 	err := db.QueryRow(`
 		SELECT is_opened FROM positions
-		WHERE symbol = ?
+		WHERE symbol = $1
 	`, symbol).Scan(&isOpened)
 
 	if err == sql.ErrNoRows {

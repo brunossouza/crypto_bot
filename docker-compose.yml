@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:alpine
+    container_name: postgres_crypto
+    environment:
+      POSTGRES_USER: crypto_user
+      POSTGRES_PASSWORD: crypto_pass
+      POSTGRES_DB: crypto_db
+    networks:
+      - crypto_bot_net
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: crypto_bot_app
+    environment:
+      BINANCE_API_KEY: 
+      BINANCE_API_SECRET: 
+      API_URL: https://testnet.binance.vision
+      SYMBOL: BTCUSDT
+      PERIOD: 14
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: crypto_user
+      DB_PASSWORD: crypto_pass
+      DB_NAME: crypto_db
+    depends_on:
+      - db
+    networks:
+      - crypto_bot_net
+    command: ["./crypto_bot"]
+
+volumes:
+  postgres_data:
+
+networks:
+  crypto_bot_net:
