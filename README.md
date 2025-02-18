@@ -2,6 +2,8 @@
 
 Bot de trading automatizado para criptomoedas desenvolvido em Go.
 
+> ⚠️ **ATENÇÃO**: Este é um projeto experimental desenvolvido para fins de estudo. O código não está preparado para uso em produção e não deve ser utilizado com recursos reais.
+
 [English version](README_EN.md)
 
 ## Funcionalidades

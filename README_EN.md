@@ -2,6 +2,8 @@
 
 Automated cryptocurrency trading bot developed in Go.
 
+> ⚠️ **WARNING**: This is an experimental project developed for study purposes. The code is not production-ready and should not be used with real assets.
+
 ## Features
 
 - Binance API integration
