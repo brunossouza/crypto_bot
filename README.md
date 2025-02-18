@@ -50,6 +50,25 @@ O bot utiliza o indicador RSI para identificar oportunidades de mercado:
 go run cmd/crypto_bot/main.go
 ```
 
+## Docker
+
+Para executar o projeto usando Docker Compose:
+
+```bash
+# Construir e iniciar os containers
+docker-compose up -d
+
+# Verificar logs
+docker-compose logs -f app
+
+# Parar os containers
+docker-compose down
+```
+
+O Docker Compose irá criar:
+- Container PostgreSQL para armazenamento de dados
+- Container da aplicação com todas as dependências necessárias
+
 ## Avisos
 
 - Use por sua conta e risco
