@@ -8,20 +8,21 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/brunossouza/crypto_bot/internal/config"
 	"github.com/brunossouza/crypto_bot/internal/database"
+	"github.com/brunossouza/crypto_bot/internal/strategy"
+	"github.com/brunossouza/crypto_bot/internal/utils"
 )
 
 var (
-	cfg      *config.Config
-	IsOpened bool = false
+	cfg         *config.Config
+	IsOpened    bool = false
+	rsiStrategy *strategy.RSIStrategy
 )
 
 // Initialize define as configurações para o pacote de trading
@@ -39,6 +40,9 @@ func Initialize(c *config.Config) {
 		log.Println("Erro ao carregar status da posição:", err)
 	}
 	IsOpened = status
+
+	// Initialize RSI strategy
+	rsiStrategy = strategy.NewRSIStrategy(cfg.Period, 70, 30)
 }
 
 type Candlestick struct {
@@ -101,108 +105,21 @@ func GetCandlesticks(symbol string, interval string, limit int) []Candlestick {
 	for i, raw := range rawData {
 		candlesticks[i] = Candlestick{
 			OpenTime:                 int64(raw[0].(float64)),
-			Open:                     parseFloat(raw[1].(string)),
-			High:                     parseFloat(raw[2].(string)),
-			Low:                      parseFloat(raw[3].(string)),
-			Close:                    parseFloat(raw[4].(string)),
-			Volume:                   parseFloat(raw[5].(string)),
+			Open:                     utils.ParseFloat(raw[1].(string)),
+			High:                     utils.ParseFloat(raw[2].(string)),
+			Low:                      utils.ParseFloat(raw[3].(string)),
+			Close:                    utils.ParseFloat(raw[4].(string)),
+			Volume:                   utils.ParseFloat(raw[5].(string)),
 			CloseTime:                int64(raw[6].(float64)),
-			QuoteAssetVolume:         parseFloat(raw[7].(string)),
+			QuoteAssetVolume:         utils.ParseFloat(raw[7].(string)),
 			NumberOfTrades:           int64(raw[8].(float64)),
-			TakerBuyBaseAssetVolume:  parseFloat(raw[9].(string)),
-			TakerBuyQuoteAssetVolume: parseFloat(raw[10].(string)),
-			Ignore:                   parseFloat(raw[11].(string)),
+			TakerBuyBaseAssetVolume:  utils.ParseFloat(raw[9].(string)),
+			TakerBuyQuoteAssetVolume: utils.ParseFloat(raw[10].(string)),
+			Ignore:                   utils.ParseFloat(raw[11].(string)),
 		}
 	}
 
 	return candlesticks
-}
-
-// parseFloat converte uma string para float64
-// Parâmetros:
-// - str: string contendo um número decimal
-//
-// O método:
-// 1. Tenta converter a string para float64
-// 2. Em caso de erro, finaliza o programa
-//
-// Retorna:
-// - float64: valor numérico convertido da string
-func parseFloat(str string) float64 {
-	val, err := strconv.ParseFloat(str, 64)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return val
-}
-
-// calculateAverage calcula a média de ganhos e perdas para um determinado período
-// Parâmetros:
-// - prices: slice com os preços históricos
-// - period: período para cálculo da média
-// - startIdx: índice inicial para começar o cálculo
-//
-// O método:
-// 1. Itera sobre os preços no período especificado
-// 2. Calcula a diferença entre preços consecutivos
-// 3. Acumula ganhos e perdas separadamente
-//
-// Retorna:
-// - float64: média dos ganhos no período
-// - float64: média das perdas no período
-func calculateAverage(prices []float64, period int, startIdx int) (float64, float64) {
-	var gain, loss float64
-	for i := 0; i < period && i+startIdx < len(prices); i++ {
-		diff := prices[i+startIdx] - prices[i+startIdx-1]
-		if diff > 0 {
-			gain += diff
-		} else {
-			loss += math.Abs(diff)
-		}
-	}
-	return gain / float64(period), loss / float64(period)
-}
-
-// CalculateRSI calcula o Índice de Força Relativa (RSI)
-// Parâmetros:
-// - prices: slice com os preços históricos
-// - period: período para cálculo do RSI (geralmente 14)
-//
-// O método:
-//  1. Verifica se há dados suficientes para o cálculo
-//  2. Calcula as médias iniciais de ganhos e perdas
-//  3. Aplica o cálculo da Média Móvel Exponencial (EMA)
-//  4. Calcula o RSI usando a fórmula: 100 - (100 / (1 + RS))
-//     onde RS = EMA dos ganhos / EMA das perdas
-//
-// Retorna:
-// - float64: valor do RSI entre 0 e 100
-func CalculateRSI(prices []float64, period int) float64 {
-	if len(prices) < period+1 {
-		panic("Not enough prices to calculate RSI")
-	}
-
-	var avgGains, avgLoss float64
-
-	// Calcula valores iniciais
-	for i := 1; i < len(prices); i++ {
-		gain, loss := calculateAverage(prices, period, i)
-
-		if i == 1 {
-			avgGains = gain
-			avgLoss = loss
-			continue
-		}
-
-		// Calcula EMA (Exponential Moving Average) para ganhos e perdas
-		avgGains = (avgGains*float64(period-1) + gain) / float64(period)
-		avgLoss = (avgLoss*float64(period-1) + loss) / float64(period)
-	}
-
-	rs := avgGains / avgLoss
-	rsi := 100.0 - (100.0 / (1.0 + rs))
-
-	return rsi
 }
 
 // NewOrder cria uma nova ordem de compra ou venda no mercado
@@ -300,7 +217,7 @@ func StartTrading() {
 	}
 
 	// Calcula o RSI
-	rsi := CalculateRSI(prices, cfg.Period)
+	rsi := rsiStrategy.GetRSI(prices)
 
 	// Limpa a tela
 	fmt.Print("\033[H\033[2J")
@@ -319,7 +236,7 @@ func StartTrading() {
 		return
 	}
 
-	if rsi < 30 && !isOpened {
+	if rsiStrategy.ShouldEnter(prices) && !isOpened {
 		fmt.Println("sobrevendido, momento de comprar")
 		if err := NewOrder(cfg.Symbol, 0.001, "BUY", lastPrice); err != nil {
 			log.Println(err)
@@ -327,7 +244,7 @@ func StartTrading() {
 		} else {
 			IsOpened = true
 		}
-	} else if rsi > 70 && isOpened {
+	} else if rsiStrategy.ShouldExit(prices) && isOpened {
 		fmt.Println("sobrecomprado, momento de vender")
 		if err := NewOrder(cfg.Symbol, 0.001, "SELL", lastPrice); err != nil {
 			log.Println(err)
