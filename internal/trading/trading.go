@@ -20,9 +20,9 @@ import (
 )
 
 var (
-	cfg         *config.Config
-	IsOpened    bool = false
-	rsiStrategy *strategy.RSIStrategy
+	cfg              *config.Config
+	IsOpened         bool = false
+	combinedStrategy *strategy.CombinedStrategy
 )
 
 // Initialize define as configurações para o pacote de trading
@@ -41,8 +41,14 @@ func Initialize(c *config.Config) {
 	}
 	IsOpened = status
 
-	// Initialize RSI strategy
-	rsiStrategy = strategy.NewRSIStrategy(cfg.Period, 70, 30)
+	// Initialize Combined strategy
+	combinedStrategy = strategy.NewCombinedStrategy(
+		14,  // RSI period
+		20,  // SMA period
+		70,  // Overbought level
+		30,  // Oversold level
+		1.0, // Trend strength threshold (1%)
+	)
 }
 
 type Candlestick struct {
@@ -216,8 +222,8 @@ func StartTrading() {
 		prices = append(prices, c.Close)
 	}
 
-	// Calcula o RSI
-	rsi := rsiStrategy.GetRSI(prices)
+	// Calcula o RSI e SMA
+	rsi, sma := combinedStrategy.GetIndicators(prices)
 
 	// Limpa a tela
 	fmt.Print("\033[H\033[2J")
@@ -225,6 +231,7 @@ func StartTrading() {
 	fmt.Println("Ativo:", cfg.Symbol)
 	fmt.Printf("Último preço: %.2f\n", lastPrice)
 	fmt.Printf("RSI: %.2f\n", rsi)
+	fmt.Printf("SMA: %.2f\n", sma)
 	fmt.Println("Período:", cfg.Period)
 	fmt.Println("Aberto:", IsOpened)
 	fmt.Println("")
@@ -236,7 +243,7 @@ func StartTrading() {
 		return
 	}
 
-	if rsiStrategy.ShouldEnter(prices) && !isOpened {
+	if combinedStrategy.ShouldEnter(prices) && !isOpened {
 		fmt.Println("sobrevendido, momento de comprar")
 		if err := NewOrder(cfg.Symbol, 0.001, "BUY", lastPrice); err != nil {
 			log.Println(err)
@@ -244,7 +251,7 @@ func StartTrading() {
 		} else {
 			IsOpened = true
 		}
-	} else if rsiStrategy.ShouldExit(prices) && isOpened {
+	} else if combinedStrategy.ShouldExit(prices) && isOpened {
 		fmt.Println("sobrecomprado, momento de vender")
 		if err := NewOrder(cfg.Symbol, 0.001, "SELL", lastPrice); err != nil {
 			log.Println(err)
